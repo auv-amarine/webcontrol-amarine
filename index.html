@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amarine GCS v2.5 - Malang Mbois</title>
+    <!-- Hanya CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Hanya Core React & Socket (Bebas dari Lib Ikon Luar agar stabil) -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    
+    <style>
+        /* Desain Scrollbar Lebih Elegan & Halus */
+        ::-webkit-scrollbar { width: 3px; height: 3px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+        
+        .terminal-font { font-family: 'Courier New', Courier, monospace; }
+        select {
+            appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 0.4rem center;
+            background-size: 0.6em;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-300 overflow-hidden font-sans">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const socket = io();
+
+        // --- IKON SVG INTERNAL (STABILITAS 100%) ---
+        const SvgIcon = ({ name, className = "" }) => {
+            const icons = {
+                terminal: <><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></>,
+                play: <polygon points="5 3 19 12 5 21 5 3"></polygon>,
+                square: <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>,
+                zap: <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            };
+            return (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                    {icons[name]}
+                </svg>
+            );
+        };
+
+        // --- OPSI DROPDOWN ROS TOOLS (Sudah pakai cmd_arm) ---
+        const ROS_OPTS = [
+            { id: 'c4a', label: 'Build' },
+            { id: 'cmd_test', label: 'Test' },
+            { id: 'cmd_arm', label: 'Arm' }, 
+            { id: 'c4c', label: 'Qualification' },
+            { id: 'cmd_final', label: 'Final' },
+            { id: 'echo_yolo', label: 'Echo YOLO Target' }
+        ];
+
+        const VIDEO_OPTS = [
+            { id: 'c2v', label: 'Kamera Mentah (USB)' },
+            { id: 'c2y', label: 'Hasil YOLO (/yolo_result)' }
+        ];
+
+        // --- OPSI KHUSUS UNTUK DROPDOWN VISION KANAN ATAS ---
+        const DETECT_OPTS = [
+            { id: 'cmd_detect_1', label: 'detect_ros.py' },
+            { id: 'cmd_detect_2', label: 'detect_ros_2.py' }
+        ];
+
+        // --- FUNGSI PEMBERSIH KODE ANEH (ANSI ESCAPE) ---
+        const cleanConsoleOutput = (text) => {
+            if (!text) return "";
+            return text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '')
+                       .replace(/\[\d+m/g, '')
+                       .replace(/\[0m/g, '')
+                       .replace(/\[m/g, '')
+                       .replace(/\[0m/g, '');
+        };
+
+        const LeftConsole = ({ title, icon, isRunning, onToggle, onClear, logs, scrollRef }) => (
+            <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl shadow-xl flex flex-col overflow-hidden min-h-[140px]">
+                <div className="bg-slate-900/80 px-3 py-1.5 flex justify-between items-center border-b border-slate-800 shrink-0">
+                    <h2 className={`text-[8px] font-black tracking-tighter uppercase flex items-center gap-1.5 ${isRunning ? 'text-emerald-400':'text-slate-400'}`}>
+                        {icon} {title}
+                    </h2>
+                    <div className="flex gap-1">
+                        <button onClick={onToggle} className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[7px] font-black uppercase shadow-lg transition-all ${isRunning ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-500'}`}>
+                            {isRunning ? <SvgIcon name="square" className="w-2.5 h-2.5"/> : <SvgIcon name="play" className="w-2.5 h-2.5"/>}
+                            {isRunning ? 'STOP' : 'START'}
+                        </button>
+                        <button onClick={onClear} className="text-[7px] bg-slate-800 text-slate-500 hover:text-slate-300 px-1.5 py-0.5 rounded font-bold transition-colors">CLR</button>
+                    </div>
+                </div>
+                <div ref={scrollRef} className="flex-1 relative bg-[#020202] p-1.5 overflow-y-auto font-mono text-[7.5px] whitespace-pre-wrap leading-tight">
+                    {logs.map((l, i) => (
+                        <div key={i} className={`mb-1 ${l.type==='error'?'text-red-500 font-bold':l.type==='cmd'?'text-emerald-400':'text-slate-400'}`}>
+                            <span className="opacity-30">[{l.time}]</span> {l.msg}
+                        </div>
+                    ))}
+                    {!isRunning && logs.length === 0 && (
+                        <div className="h-full flex items-center justify-center opacity-20">
+                            <span className="text-[8px] font-black uppercase tracking-widest text-center">Ready For<br/>Commands</span>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+
+        const MiniConsole = ({ id, data, isFixed, showVideo, options = [], onToggle, onSelectChange, onClear, videoSrc, slotRef }) => (
+            <div className="flex-1 bg-black rounded-xl border border-slate-800 flex flex-col overflow-hidden shadow-lg min-h-0">
+                <div className="bg-slate-900/80 px-3 py-1.5 flex justify-between items-center border-b border-slate-800 shrink-0">
+                    <div className="flex items-center gap-2">
+                        {isFixed ? (
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{data.title}</span>
+                        ) : (
+                            <select 
+                                value={data.selected} 
+                                onChange={(e) => onSelectChange(id, e.target.value)}
+                                className="bg-slate-800 text-[8px] font-black text-blue-400 rounded border border-slate-700 pl-2 pr-6 py-0.5 outline-none cursor-pointer"
+                            >
+                                {options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+                            </select>
+                        )}
+                    </div>
+                    <div className="flex gap-1">
+                        <button onClick={() => onToggle(id)} className={`text-[8px] px-2 py-0.5 rounded border font-bold uppercase transition-all ${data.isRunning ? 'bg-red-600 border-red-500 text-white' : 'bg-blue-900/40 text-blue-300 border-blue-700'}`}>
+                            {data.isRunning ? 'STOP' : 'START'}
+                        </button>
+                        <button onClick={() => onClear(id)} className="text-[8px] bg-slate-800 text-slate-500 hover:text-slate-300 px-2 py-0.5 rounded transition-colors">CLR</button>
+                    </div>
+                </div>
+                <div className="flex-1 relative overflow-hidden flex flex-col">
+                    {showVideo && data.isRunning ? (
+                        <div className="absolute inset-0 bg-black flex items-center justify-center">
+                            {videoSrc ? <img src={videoSrc} className="w-full h-full object-contain" /> : <div className="text-slate-700 italic text-[10px] animate-pulse">Menunggu Feed Video...</div>}
+                        </div>
+                    ) : (
+                        <div ref={slotRef} className="flex-1 p-2 font-mono text-[9px] overflow-y-auto bg-[#020202] whitespace-pre-wrap leading-tight">
+                            {data.logs.map((l, i) => (
+                                <div key={i} className={`mb-0.5 ${l.type==='error'?'text-red-500 font-bold':l.type==='cmd'?'text-blue-400':'text-slate-500'}`}>
+                                    <span className="opacity-20">[{l.time}]</span> {l.msg}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [sshConnected, setSshConnected] = useState(false);
+            const [isConnecting, setIsConnecting] = useState(false); 
+            
+            const [stats, setStats] = useState({ cpu: 0, gpu: 0, mem: 0, temp: 0, watt: 0, battery: "16.4V" });
+            const [powerMode, setPowerMode] = useState('Max');
+            const [videoSrc, setVideoSrc] = useState(null);
+
+            const [consoles, setConsoles] = useState({
+                con1: { logs: [], selected: 'c2v', isRunning: false },
+                con2: { logs: [], selected: 't1_mavros', title: 'MAVROS', isRunning: false }, 
+                // con3 pakai opsi detect_ros
+                con3: { logs: [], selected: 'cmd_detect_1', isRunning: false },
+                con4: { logs: [], selected: 'c4c', isRunning: false },
+                con5: { logs: [], selected: 'cmd_test', isRunning: false },
+                con6: { logs: [], selected: 'cmd_final', isRunning: false }
+            });
+
+            const [term1, setTerm1] = useState({ logs: [], isRunning: false });
+            const [term2, setTerm2] = useState({ logs: [], isRunning: false });
+            const [term3, setTerm3] = useState({ logs: [], isRunning: false });
+            
+            const [mainLogs, setMainLogs] = useState([{ time: new Date().toLocaleTimeString(), msg: "GCS Started. Malang Power Ready.", type: 'info' }]);
+
+            const mainScroll = useRef(null);
+            const term1Scroll = useRef(null);
+            const term2Scroll = useRef(null);
+            const term3Scroll = useRef(null);
+            // Referensi untuk 6 console
+            const slotRefs = { con1: useRef(null), con2: useRef(null), con3: useRef(null), con4: useRef(null), con5: useRef(null), con6: useRef(null) };
+
+            // --- SOCKET LISTENERS ---
+            useEffect(() => {
+                socket.on('connect', () => setMainLogs(p => [...p.slice(-49), { time: new Date().toLocaleTimeString(), msg: "[SYSTEM] Jaringan Socket UI-Backend Terhubung.", type: 'success' }]));
+                socket.on('disconnect', () => setMainLogs(p => [...p.slice(-49), { time: new Date().toLocaleTimeString(), msg: "[SYSTEM] Jaringan Socket Terputus!", type: 'error' }]));
+
+                socket.on('ssh_status', d => { setSshConnected(d.connected); setIsConnecting(false); });
+                socket.on('video_feed', d => setVideoSrc(`data:image/jpeg;base64,${d}`));
+                socket.on('terminal_output', d => {
+                    const time = new Date().toLocaleTimeString();
+                    const cleanMsg = cleanConsoleOutput(d.text);
+                    
+                    if (cleanMsg.includes('Gagal') || cleanMsg.includes('Error')) setIsConnecting(false);
+                    
+                    if (!d.target || d.target === 'Main') {
+                        setMainLogs(p => [...p.slice(-49), { time, msg: cleanMsg, type: d.type || 'info' }]);
+                    } else if (d.target === 'con_term1') {
+                        setTerm1(p => {
+                            const newLogs = [...p.logs.slice(-49), { time, msg: cleanMsg, type: d.type || 'info' }];
+                            return { logs: newLogs, isRunning: cleanMsg.includes("selesai") ? false : p.isRunning };
+                        });
+                    } else if (d.target === 'con_term2') {
+                        setTerm2(p => {
+                            const newLogs = [...p.logs.slice(-49), { time, msg: cleanMsg, type: d.type || 'info' }];
+                            return { logs: newLogs, isRunning: cleanMsg.includes("selesai") ? false : p.isRunning };
+                        });
+                    } else if (d.target === 'con_term3') {
+                        setTerm3(p => {
+                            const newLogs = [...p.logs.slice(-49), { time, msg: cleanMsg, type: d.type || 'info' }];
+                            return { logs: newLogs, isRunning: cleanMsg.includes("selesai") ? false : p.isRunning };
+                        });
+                    } else {
+                        setConsoles(p => {
+                            const newC = {...p};
+                            if (newC[d.target]) {
+                                newC[d.target].logs = [...newC[d.target].logs.slice(-49), { time, msg: cleanMsg, type: d.type || 'info' }];
+                                if (cleanMsg.includes("selesai")) newC[d.target].isRunning = false;
+                            }
+                            return newC;
+                        });
+                    }
+                });
+                socket.on('hardware_stats', d => setStats(p => ({ ...p, ...d })));
+                return () => socket.off();
+            }, []);
+
+            // AUTO SCROLL
+            useEffect(() => { if (mainScroll.current) mainScroll.current.scrollTop = mainScroll.current.scrollHeight; }, [mainLogs]);
+            useEffect(() => { if (term1Scroll.current) term1Scroll.current.scrollTop = term1Scroll.current.scrollHeight; }, [term1.logs]);
+            useEffect(() => { if (term2Scroll.current) term2Scroll.current.scrollTop = term2Scroll.current.scrollHeight; }, [term2.logs]);
+            useEffect(() => { if (term3Scroll.current) term3Scroll.current.scrollTop = term3Scroll.current.scrollHeight; }, [term3.logs]);
+            useEffect(() => { Object.keys(slotRefs).forEach(id => { if (slotRefs[id].current) slotRefs[id].current.scrollTop = slotRefs[id].current.scrollHeight; }); }, [consoles]);
+
+            // --- HANDLER BUTTONS ---
+            const handleConnectSSH = () => {
+                if (sshConnected) {
+                    socket.emit('request_ssh_disconnect');
+                } else {
+                    setIsConnecting(true);
+                    setMainLogs(p => [...p.slice(-49), { time: new Date().toLocaleTimeString(), msg: "[LOCAL] Mencoba terhubung ke mesin Jetson...", type: 'cmd' }]);
+                    socket.emit('request_ssh_connect');
+                    setTimeout(() => {
+                        setIsConnecting(p => {
+                            if (p) setMainLogs(logs => [...logs.slice(-49), { time: new Date().toLocaleTimeString(), msg: "[LOCAL] Timeout! Cek IP Jetson di app.py (Harus 127.0.0.1).", type: 'error' }]);
+                            return false;
+                        });
+                    }, 6000); 
+                }
+            };
+
+            const onToggle = (id) => {
+                if (!sshConnected) return;
+                const c = consoles[id];
+                const isKill = c.isRunning;
+                socket.emit('run_alias', { id: isKill ? 'kill_specific' : c.selected, target: id, cmd: c.selected });
+                setConsoles(p => ({ ...p, [id]: { ...p[id], isRunning: !isKill } }));
+            };
+
+            const handleSelectChange = (id, value) => {
+                setConsoles(p => ({...p, [id]: {...p[id], selected: value}}));
+            };
+
+            const handleClearConsole = (id) => {
+                setConsoles(p => ({...p, [id]: {...p[id], logs: []}}));
+            };
+
+            const toggleTerm1 = () => {
+                if (!sshConnected) return;
+                const isKill = term1.isRunning;
+                socket.emit('run_alias', { id: isKill ? 'kill_specific' : 't1_mavros', target: 'con_term1', cmd: 't1_mavros' });
+                setTerm1(p => ({ ...p, isRunning: !isKill }));
+            };
+
+            const toggleTerm2 = () => {
+                if (!sshConnected) return;
+                const isKill = term2.isRunning;
+                socket.emit('run_alias', { id: isKill ? 'kill_specific' : 't2_arm', target: 'con_term2', cmd: 't2_arm' });
+                setTerm2(p => ({ ...p, isRunning: !isKill }));
+            };
+
+            const toggleTerm3 = () => {
+                if (!sshConnected) return;
+                const isKill = term3.isRunning;
+                socket.emit('run_alias', { id: isKill ? 'kill_specific' : 't3_auto', target: 'con_term3', cmd: 't3_auto' });
+                setTerm3(p => ({ ...p, isRunning: !isKill }));
+            };
+
+            return (
+                <div className="h-screen w-screen flex flex-col p-4 gap-4 bg-slate-950 text-slate-300 font-sans">
+                    <header className="flex gap-4 h-24 shrink-0">
+                        {/* KONEKSI SSH DENGAN EFEK WARNA BARU */}
+                        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-3 flex gap-3 shadow-xl backdrop-blur-md">
+                            <div className="flex flex-col gap-2">
+                                <button 
+                                    onClick={handleConnectSSH} 
+                                    disabled={isConnecting}
+                                    className={`px-5 py-1.5 rounded-lg font-black text-[10px] flex items-center gap-2 border uppercase tracking-widest transition-all duration-300 ${
+                                        sshConnected 
+                                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-900/50 hover:bg-emerald-500' 
+                                        : isConnecting 
+                                        ? 'bg-amber-500 text-white border-amber-400 cursor-wait shadow-lg shadow-amber-900/50' 
+                                        : 'bg-blue-600 text-white border-blue-500 hover:bg-blue-500 shadow-lg shadow-blue-900/50'
+                                    }`}
+                                >
+                                    <div className={`w-1.5 h-1.5 rounded-full ${sshConnected ? 'bg-white animate-ping' : isConnecting ? 'bg-white animate-pulse' : 'bg-white'}`}></div>
+                                    {sshConnected ? 'Connected' : isConnecting ? 'Connecting...' : 'Connect'}
+                                </button>
+                                <button onClick={() => socket.emit('request_shutdown')} className="px-5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg font-black text-[10px] text-red-500 hover:bg-red-600 hover:text-white transition-colors uppercase">Shutdown</button>
+                            </div>
+                            <button onClick={() => socket.emit('run_alias', {id:'c2a', target:'Main'})} className="px-4 py-1.5 bg-slate-800 border border-slate-700 rounded-lg font-black text-[10px] hover:bg-blue-600 hover:text-white transition-colors uppercase">Cam Bridge</button>
+                        </div>
+
+                        {/* STATISTIK HARDWARE */}
+                        <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-2xl p-3 flex flex-col justify-center shadow-xl text-center">
+                            <span className="text-[9px] font-black text-slate-600 uppercase mb-2 tracking-[0.4em]">Hardware Live Monitoring</span>
+                            <div className="grid grid-cols-6 gap-2">
+                                {['CPU', 'GPU', 'Memory', 'Temp', 'Watt', 'Battery'].map((l, i) => (
+                                    <div key={l} className={`flex flex-col items-center ${i > 0 ? 'border-l border-slate-800' : ''}`}>
+                                        <span className="text-[8px] font-black text-slate-500 uppercase mb-0.5">{l}</span>
+                                        <span className="text-sm font-mono font-bold text-slate-200">
+                                            {l==='CPU'?`${stats.cpu}%`:l==='GPU'?`${stats.gpu}%`:l==='Memory'?`${stats.mem}G`:l==='Temp'?`${stats.temp}°C`:l==='Watt'?`${stats.watt}W`:stats.battery}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <button onClick={() => socket.emit('request_estop')} className="px-10 h-full bg-red-700 border-2 border-red-500 rounded-2xl font-black text-white hover:bg-red-600 shadow-xl text-xl transition-colors">🛑 E-STOP</button>
+                    </header>
+
+                    <div className="flex-1 flex gap-4 min-h-0">
+                        {/* PANEL KIRI TETAP 3 KOTAK */}
+                        <div className="w-64 flex flex-col gap-3 shrink-0">
+                            <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-3 shadow-xl shrink-0">
+                                <h4 className="text-[9px] font-black text-slate-500 uppercase mb-2 text-center tracking-widest">Power Mode</h4>
+                                <div className="grid grid-cols-4 gap-1">
+                                    {[1, 2, 3, 'Max'].map(m => (
+                                        <button key={m} onClick={() => {setPowerMode(m); socket.emit('request_power_mode', {mode:m});}} className={`py-1.5 text-[9px] font-bold rounded border transition-colors ${powerMode===m ? 'bg-blue-600 border-blue-400 text-white':'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'}`}>{m}</button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <LeftConsole title="1. MAVROS CONN" icon={<SvgIcon name="terminal" className="w-3 h-3"/>} 
+                                isRunning={term1.isRunning} onToggle={toggleTerm1} onClear={() => setTerm1(p=>({...p, logs:[]}))} 
+                                logs={term1.logs} scrollRef={term1Scroll} />
+
+                            <LeftConsole title="2. MODE & ARM" icon={<SvgIcon name="zap" className="w-3 h-3"/>} 
+                                isRunning={term2.isRunning} onToggle={toggleTerm2} onClear={() => setTerm2(p=>({...p, logs:[]}))} 
+                                logs={term2.logs} scrollRef={term2Scroll} />
+
+                            <LeftConsole title="3. BOAT SEQUENCE" icon={<SvgIcon name="play" className="w-3 h-3"/>} 
+                                isRunning={term3.isRunning} onToggle={toggleTerm3} onClear={() => setTerm3(p=>({...p, logs:[]}))} 
+                                logs={term3.logs} scrollRef={term3Scroll} />
+                        </div>
+
+                        {/* KOTAK TENGAH SEKARANG MENJADI 3 KOLOM X 2 BARIS (6 KOTAK) */}
+                        <div className="flex-1 grid grid-cols-3 grid-rows-2 gap-4">
+                            <MiniConsole id="con1" data={consoles.con1} isFixed={false} showVideo={true} options={VIDEO_OPTS} 
+                                onToggle={onToggle} onSelectChange={handleSelectChange} onClear={handleClearConsole} videoSrc={videoSrc} slotRef={slotRefs.con1} />
+                            
+                            <MiniConsole id="con2" data={consoles.con2} isFixed={true} showVideo={false} 
+                                onToggle={onToggle} onSelectChange={handleSelectChange} onClear={handleClearConsole} videoSrc={videoSrc} slotRef={slotRefs.con2} />
+                            
+                            {/* KOTAK KANAN ATAS MENGGUNAKAN OPSI DETECT */}
+                            <MiniConsole id="con3" data={consoles.con3} isFixed={false} showVideo={false} options={DETECT_OPTS} 
+                                onToggle={onToggle} onSelectChange={handleSelectChange} onClear={handleClearConsole} videoSrc={videoSrc} slotRef={slotRefs.con3} />
+                            
+                            <MiniConsole id="con4" data={consoles.con4} isFixed={false} showVideo={false} options={ROS_OPTS} 
+                                onToggle={onToggle} onSelectChange={handleSelectChange} onClear={handleClearConsole} videoSrc={videoSrc} slotRef={slotRefs.con4} />
+
+                            <MiniConsole id="con5" data={consoles.con5} isFixed={false} showVideo={false} options={ROS_OPTS} 
+                                onToggle={onToggle} onSelectChange={handleSelectChange} onClear={handleClearConsole} videoSrc={videoSrc} slotRef={slotRefs.con5} />
+
+                            <MiniConsole id="con6" data={consoles.con6} isFixed={false} showVideo={false} options={ROS_OPTS} 
+                                onToggle={onToggle} onSelectChange={handleSelectChange} onClear={handleClearConsole} videoSrc={videoSrc} slotRef={slotRefs.con6} />
+                        </div>
+
+                        {/* KONSOL UTAMA (KANAN) */}
+                        <aside className="w-[25%] bg-slate-900 border border-slate-800 rounded-2xl flex flex-col overflow-hidden shadow-2xl text-blue-400">
+                            <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center shrink-0">
+                                <span className="text-[10px] font-black uppercase tracking-widest flex items-center gap-2">
+                                    <SvgIcon name="terminal" className="w-3 h-3" /> Main Console Output
+                                </span>
+                                <button onClick={() => setMainLogs([])} className="text-[8px] bg-slate-800 text-slate-500 hover:text-slate-300 px-2 py-0.5 rounded font-bold transition-colors">CLR</button>
+                            </div>
+                            <div ref={mainScroll} className="flex-1 p-4 font-mono text-[10px] overflow-y-auto space-y-1 bg-[#020202]">
+                                {mainLogs.map((l, i) => (
+                                    <div key={i} className="flex gap-2 border-b border-slate-900/30 pb-0.5 leading-tight text-[9px]">
+                                        <span className="text-slate-700 shrink-0 font-bold">[{l.time}]</span>
+                                        <span className={l.type==='error'?'text-red-500 font-bold':l.type==='success'?'text-emerald-400':l.type==='cmd'?'text-blue-400':'text-slate-400'}>{l.msg}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </aside>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
