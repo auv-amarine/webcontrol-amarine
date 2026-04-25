@@ -17,12 +17,12 @@ JETSON_IP = '127.0.0.1'
 JETSON_USER = 'amarine'
 JETSON_PASS = '123890' 
 
-# PATH BARU SESUAI PERMINTAAN KAPTEN OZZA
+# PATH DIREKTORI BARU KAPTEN OZZA
 BASE_PATH = "~/webcontrol-amarine/"
 
 # Alias Mapping Lengkap (Gazebo, Vision, ArduPilot, MAVRoS, ROS2)
 ALIAS_MAP = {
-    # GAZEBO
+    # GAZEBO SIMULATION
     'c1a': 'gz sim -v 3 -r sauvc_qualification.world',
     'c1b': 'gz sim -v 3 -r sauvc_final.world',
     
@@ -30,17 +30,17 @@ ALIAS_MAP = {
     'c2v': f'python3 {BASE_PATH}streamer.py', 
     'c2y': f'source /opt/ros/humble/setup.bash && python3 {BASE_PATH}yolo_streamer.py', 
     
-    # VISION (YOLO VIA DOCKER - FIX RCLPY)
+    # VISION (YOLO VIA DOCKER - FIX MODULE RCLPY)
     'cmd_detect_1': "docker start be537dc7c441 && docker exec be537dc7c441 bash -c 'source /opt/ros/humble/setup.bash && cd /ultralytics && export ROS_DOMAIN_ID=0 && python3 detect_ros.py'",
     'cmd_detect_2': "docker start be537dc7c441 && docker exec be537dc7c441 bash -c 'source /opt/ros/humble/setup.bash && cd /ultralytics && export ROS_DOMAIN_ID=0 && python3 detect_ros_2.py'",
     
     # ARDUPILOT SITL
     'cmd_sitl': 'cd ~/ardupilot && Tools/autotest/sim_vehicle.py -L RATBeach -v ArduSub -f vectored --model=JSON --out=udp:127.0.0.1:14550',
     
-    # MAVROS (UDP JALUR BARU)
-    't1_mavros': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 launch mavros apm.launch fcu_url:=udp://:14550@localhost:14555",
+    # MAVROS (FIX: PAKAI PORT 14551 & PAKSA NAMESPACE /mavros SUPAYA SINKRON DENGAN C++)
+    't1_mavros': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run mavros mavros_node --ros-args -p fcu_url:=udp://:14551@ -p system_id:=255 --remap __ns:=/mavros",
     
-    # ROS2 TOOLS (DROPDOWN)
+    # ROS2 TOOLS (DROPDOWN MENU)
     'c4a': 'source /opt/ros/humble/setup.bash && cd ~/ros2_ws && colcon build --packages-select sauvc26_code',
     'cmd_test': 'source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code test', 
     'cmd_arm': 'source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code arm',
@@ -48,11 +48,11 @@ ALIAS_MAP = {
     'cmd_final': 'source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code final',
     'echo_yolo': 'source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 topic echo /yolo_target_coord',
     
-    # TOMBOL PANEL KIRI (SERVICE)
+    # TOMBOL PANEL KIRI (SERVICE & AUTO)
     't2_arm': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 service call /mavros/set_mode mavros_msgs/srv/SetMode \"{custom_mode: 'MANUAL'}\" && ros2 service call /mavros/cmd/arming mavros_msgs/srv/CommandBool \"{value: True}\"",
-    't3_auto': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run simple_boat boat_mover_node",
+    't3_auto': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code boat_mover_node",
     
-    # MONITOR & BRIDGE
+    # SYSTEM TOOLS
     'c0a': f'{BASE_PATH}monitor.sh',
     'c2a': "source /opt/ros/humble/setup.bash && ros2 run ros_gz_bridge parameter_bridge '/front_camera@sensor_msgs/msg/Image@gz.msgs.Image'"
 }
@@ -130,7 +130,7 @@ def handle_alias(data):
         }
         proc_name = kill_map.get(cmd_id, cmd_id)
         ssh_client.exec_command(f"pkill -9 -f {proc_name}")
-        socketio.emit('terminal_output', {'text': f"[SYSTEM] Menutup proses: {proc_name}", 'target': target, 'type': 'error'})
+        socketio.emit('terminal_output', {'text': f"[SYSTEM] Menutup paksa proses: {proc_name}", 'target': target, 'type': 'error'})
         return
 
     if alias_id in ALIAS_MAP:
@@ -143,7 +143,7 @@ def handle_alias(data):
             threading.Thread(target=stream_output, args=(chan, target)).start()
             socketio.emit('terminal_output', {'text': f"[LOCAL] Menjalankan: {cmd}\n", 'target': target, 'type': 'cmd'})
         except Exception as e:
-            socketio.emit('terminal_output', {'text': f"[ERROR] Gagal: {str(e)}", 'target': target, 'type': 'error'})
+            socketio.emit('terminal_output', {'text': f"[ERROR] Gagal eksekusi: {str(e)}", 'target': target, 'type': 'error'})
 
 @socketio.on('request_ssh_connect')
 def handle_ssh_connect():
@@ -155,8 +155,10 @@ def handle_ssh_connect():
         is_ssh_connected = True
         socketio.start_background_task(hardware_monitor_thread)
         socketio.emit('ssh_status', {'connected': True})
+        socketio.emit('terminal_output', {'text': f"[SYSTEM] Terhubung ke mesin Jetson Lokal.", 'target': 'Main', 'type': 'success'})
     except Exception as e:
         socketio.emit('ssh_status', {'connected': False})
+        socketio.emit('terminal_output', {'text': f"[ERROR] SSH Gagal: {str(e)}", 'target': 'Main', 'type': 'error'})
 
 @socketio.on('request_ssh_disconnect')
 def handle_ssh_disconnect():
@@ -176,5 +178,8 @@ def get_local_ip():
 
 if __name__ == '__main__':
     local_ip = get_local_ip()
-    print(f"🚀 SERVER GCS AKTIF: http://{local_ip}:5000")
+    print("\n=======================================================")
+    print("🚀 SERVER GCS AMARINE MALANG MBOIS ACTIVE!")
+    print(f"📡 Akses Web: http://{local_ip}:5000")
+    print("=======================================================\n")
     socketio.run(app, host='0.0.0.0', port=5000, debug=False)
