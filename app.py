@@ -30,18 +30,18 @@ ALIAS_MAP = {
     'c2v': f'python3 {BASE_PATH}streamer.py', 
     'c2y': f'source /opt/ros/humble/setup.bash && python3 {BASE_PATH}yolo_streamer.py', 
     
-    # VISION (YOLO VIA DOCKER - FIX MODULE RCLPY)
+    # VISION (YOLO VIA DOCKER)
     'cmd_detect_1': "docker start be537dc7c441 && docker exec be537dc7c441 bash -c 'source /opt/ros/humble/setup.bash && cd /ultralytics && export ROS_DOMAIN_ID=0 && python3 detect_ros.py'",
     'cmd_detect_2': "docker start be537dc7c441 && docker exec be537dc7c441 bash -c 'source /opt/ros/humble/setup.bash && cd /ultralytics && export ROS_DOMAIN_ID=0 && python3 detect_ros_2.py'",
     
     # ARDUPILOT SITL
     'cmd_sitl': 'cd ~/ardupilot && Tools/autotest/sim_vehicle.py -L RATBeach -v ArduSub -f vectored --model=JSON --out=udp:127.0.0.1:14550',
     
-    # MAVROS (FIX: PAKAI PORT 14551 & PAKSA NAMESPACE /mavros SUPAYA SINKRON DENGAN C++)
-    't1_mavros': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run mavros mavros_node --ros-args -p fcu_url:=udp://:14551@ -p system_id:=255 --remap __ns:=/mavros",
+    # MAVROS (TEMBAK KE HARDWARE USB /dev/ttyACM0)
+    't1_mavros': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 launch mavros apm.launch fcu_url:=/dev/ttyACM0:115200 gcs_url:=udp://@",
     
     # ROS2 TOOLS (DROPDOWN MENU)
-    'c4a': 'source /opt/ros/humble/setup.bash && cd ~/ros2_ws && colcon build --packages-select sauvc26_code',
+    'c4a': 'source /opt/ros/humble/setup.bash && cd ~/ros2_ws && colcon build --packages-select sauvc26_code simple_boat',
     'cmd_test': 'source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code test', 
     'cmd_arm': 'source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code arm',
     'c4c': 'source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code qualification',
@@ -50,7 +50,9 @@ ALIAS_MAP = {
     
     # TOMBOL PANEL KIRI (SERVICE & AUTO)
     't2_arm': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 service call /mavros/set_mode mavros_msgs/srv/SetMode \"{custom_mode: 'MANUAL'}\" && ros2 service call /mavros/cmd/arming mavros_msgs/srv/CommandBool \"{value: True}\"",
-    't3_auto': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run sauvc26_code boat_mover_node",
+    
+    # FIX: MENGGUNAKAN PACKAGE simple_boat SESUAI REQUEST KAPTEN OZZA
+    't3_auto': "source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash && ros2 run simple_boat boat_mover_node",
     
     # SYSTEM TOOLS
     'c0a': f'{BASE_PATH}monitor.sh',
@@ -130,7 +132,7 @@ def handle_alias(data):
         }
         proc_name = kill_map.get(cmd_id, cmd_id)
         ssh_client.exec_command(f"pkill -9 -f {proc_name}")
-        socketio.emit('terminal_output', {'text': f"[SYSTEM] Menutup paksa proses: {proc_name}", 'target': target, 'type': 'error'})
+        socketio.emit('terminal_output', {'text': f"[SYSTEM] Menutup proses: {proc_name}", 'target': target, 'type': 'error'})
         return
 
     if alias_id in ALIAS_MAP:
@@ -178,8 +180,5 @@ def get_local_ip():
 
 if __name__ == '__main__':
     local_ip = get_local_ip()
-    print("\n=======================================================")
-    print("🚀 SERVER GCS AMARINE MALANG MBOIS ACTIVE!")
-    print(f"📡 Akses Web: http://{local_ip}:5000")
-    print("=======================================================\n")
+    print(f"🚀 SERVER GCS AKTIF: http://{local_ip}:5000")
     socketio.run(app, host='0.0.0.0', port=5000, debug=False)
